@@ -3,12 +3,13 @@ use strict;
 use warnings;
 use Getopt::Long;
 
+my $no_sudo = 0;
 my $warn = 92.0;
 my $crit = 96.0;
 
 sub get_thinpools {
   $ENV{'LC_ALL'} = 'C';  # Set locale for lvs call
-  my @lvsoutput = `lvs --noheadings --separator : --select 'lv_attr =~ ^t' -o lv_attr,lv_name,data_percent,metadata_percent`;
+  my @lvsoutput = readpipe(join(" ", $no_sudo == 0 ? "sudo" : "", "lvs --noheadings --separator : --select 'lv_attr =~ ^t' -o lv_attr,lv_name,data_percent,metadata_percent"));
   my @thinpools;
 
   for my $lvsline (@lvsoutput) {
@@ -47,6 +48,17 @@ sub check_thinpools {
   return;
 }
 
+sub build_perfdata {
+  my @perfdata;
+  
+  for my $thinpool (get_thinpools()) {
+    push @perfdata, "$thinpool->{lv_name}=$thinpool->{data_percent};$warn;$crit;0;";
+    push @perfdata, "$thinpool->{lv_name}_meta=$thinpool->{metadata_percent};$warn;$crit;0;";
+  }
+  
+  return join(" ", @perfdata);
+}
+
 my @errors;
 
 sub add_error {
@@ -67,17 +79,18 @@ sub aggregate_errors {
     for my $error (@sorted_errors) {
       print $error->{message}, "\n";
     }
+    print "|", build_perfdata(), "\n";
     exit $sorted_errors[0]->{exit_code};
   }
 
   return;
 }
 
-
 my $no_thinpools_ok = 0;
 Getopt::Long::Configure('bundling');
 GetOptions
     ("no-thinpools-ok"  => \$no_thinpools_ok,
+     "no-sudo" => \$no_sudo,
      "w=f" => \$warn, "warning=f" => \$warn,
      "c=f" => \$crit, "critical=f" => \$crit)
     or die("Error in command line arguments\n");
@@ -98,5 +111,6 @@ if (scalar @thinpools == 0) {
   aggregate_errors();
 }
 
-print "OK - All thinpools OK\n";
+print "OK - All thinpools OK|", build_perfdata(), "\n";
+
 exit 0;
